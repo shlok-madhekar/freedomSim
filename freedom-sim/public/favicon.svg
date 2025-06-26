@@ -1,0 +1,13 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="16" cy="16" r="15" fill="#dc2626"/>
+  
+  <!-- Surveillance camera icon -->
+  <path d="M10 12h12v8H10z" fill="#1f2937"/>
+  <circle cx="16" cy="16" r="3" fill="#111827"/>
+  <circle cx="16" cy="16" r="2" fill="#dc2626"/>
+  <circle cx="16" cy="16" r="1" fill="#1f2937"/>
+  
+  <!-- Camera mount -->
+  <rect x="14" y="20" width="4" height="2" fill="#374151"/>
+</svg> 
