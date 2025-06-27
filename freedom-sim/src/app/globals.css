@@ -155,3 +155,117 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.8; }
 }
+
+/* Score flash animations */
+@keyframes score-flash-positive {
+  0% { 
+    background-color: rgba(34, 197, 94, 0.1);
+    transform: scale(1);
+  }
+  50% { 
+    background-color: rgba(34, 197, 94, 0.3);
+    transform: scale(1.05);
+  }
+  100% { 
+    background-color: rgba(34, 197, 94, 0.1);
+    transform: scale(1);
+  }
+}
+
+@keyframes score-flash-negative {
+  0% { 
+    background-color: rgba(239, 68, 68, 0.1);
+    transform: scale(1);
+  }
+  50% { 
+    background-color: rgba(239, 68, 68, 0.3);
+    transform: scale(1.05);
+  }
+  100% { 
+    background-color: rgba(239, 68, 68, 0.1);
+    transform: scale(1);
+  }
+}
+
+.score-flash-positive {
+  animation: score-flash-positive 1s ease-in-out;
+}
+
+.score-flash-negative {
+  animation: score-flash-negative 1s ease-in-out;
+}
+
+/* Risk meter flash animation */
+@keyframes risk-meter-flash {
+  0% { 
+    box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+  }
+  50% { 
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  }
+  100% { 
+    box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+.risk-meter-flash {
+  animation: risk-meter-flash 1s ease-in-out;
+}
+
+/* Progress bar fill animation */
+@keyframes progress-fill {
+  from { width: 0%; }
+  to { width: var(--progress-width); }
+}
+
+.progress-fill {
+  animation: progress-fill 0.8s ease-out;
+}
+
+/* Event log entry animations */
+@keyframes event-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.event-slide-in {
+  animation: event-slide-in 0.3s ease-out;
+}
+
+/* Critical warning pulse */
+@keyframes critical-pulse {
+  0%, 100% { 
+    background-color: rgba(239, 68, 68, 0.1);
+    box-shadow: 0 0 0 rgba(239, 68, 68, 0.3);
+  }
+  50% { 
+    background-color: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  }
+}
+
+.critical-pulse {
+  animation: critical-pulse 2s ease-in-out infinite;
+}
+
+/* Consecutive violation warning */
+@keyframes violation-warning {
+  0%, 100% { 
+    background-color: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+  50% { 
+    background-color: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.6);
+  }
+}
+
+.violation-warning {
+  animation: violation-warning 1.5s ease-in-out infinite;
+}

@@ -1,5 +1,8 @@
-export { DialogueCard } from './DialogueCard';
 export { CharacterDisplay } from './CharacterDisplay';
-export { CreditScoreTracker } from './CreditScoreTracker';
 export { ConversationArea } from './ConversationArea';
-export { ReplyButton } from './ReplyButton'; 
+export { CreditScoreTracker } from './CreditScoreTracker';
+export { DialogueCard } from './DialogueCard';
+export { ReplyButton } from './ReplyButton';
+export { RiskEventLog } from './RiskEventLog';
+export { SessionStats } from './SessionStats';
+export { GameEnding } from './GameEnding'; 

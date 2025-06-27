@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect } from 'react';
 import Image from "next/image";
 import { Eye, Shield, MapPin, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,65 +8,75 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { CharacterDisplay } from "@/components/game/CharacterDisplay";
 import { CreditScoreTracker } from "@/components/game/CreditScoreTracker";
 import { ConversationArea } from "@/components/game/ConversationArea";
+import { RiskEventLog } from "@/components/game/RiskEventLog";
+import { SessionStats } from "@/components/game/SessionStats";
+import { GameEnding } from "@/components/game/GameEnding";
+import { useGameStore } from "@/lib/gameStore";
 import { 
-  GameState, 
-  Message, 
   SAMPLE_CONVERSATIONS, 
-  getRiskLevel, 
   getNextResponse 
 } from "@/lib/gameState";
 
 export default function Home() {
-  const [gameState, setGameState] = useState<GameState>({
-    socialCreditScore: 750,
-    riskLevel: 'LOW',
-    currentCharacter: {
-      name: "Sarah Chen",
-      role: "Senior Compliance Officer",
-      status: "neutral",
-      trustLevel: 65
-    },
-    messages: [],
-    currentChoices: [],
-    gamePhase: 'welcome'
-  });
+  const {
+    socialCreditScore,
+    riskLevel,
+    currentCharacter,
+    messages,
+    currentChoices,
+    gamePhase,
+    isLoading,
+    updateScore,
+    setGamePhase,
+    setCurrentCharacter,
+    setMessages,
+    setCurrentChoices,
+    setIsLoading,
+    startNewSession,
+    endCurrentSession,
+    resetGame
+  } = useGameStore();
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [previousScore, setPreviousScore] = useState<number | undefined>(undefined);
+  // Initialize game session on mount
+  useEffect(() => {
+    if (gamePhase === 'welcome') {
+      startNewSession();
+    }
+  }, [gamePhase, startNewSession]);
 
   const startConversation = (conversationType: keyof typeof SAMPLE_CONVERSATIONS) => {
     const conversation = SAMPLE_CONVERSATIONS[conversationType];
-    setGameState(prev => ({
-      ...prev,
-      gamePhase: 'conversation',
-      currentCharacter: conversation.character,
-      messages: conversation.messages,
-      currentChoices: conversation.choices
-    }));
+    setGamePhase('conversation');
+    setCurrentCharacter(conversation.character);
+    setMessages(conversation.messages);
+    setCurrentChoices(conversation.choices);
   };
 
   const handleChoiceSelect = async (choiceId: string) => {
     setIsLoading(true);
     
     // Find the selected choice
-    const selectedChoice = gameState.currentChoices.find(choice => choice.id === choiceId);
+    const selectedChoice = currentChoices.find(choice => choice.id === choiceId);
     if (!selectedChoice) return;
 
-    // Update score
-    const newScore = Math.max(0, Math.min(1000, gameState.socialCreditScore + selectedChoice.scoreImpact));
-    setPreviousScore(gameState.socialCreditScore);
+    // Update score using the new store
+    updateScore(
+      selectedChoice.scoreImpact, 
+      `Response to ${currentCharacter.name}`, 
+      choiceId
+    );
     
     // Add player's choice to messages
-    const playerMessage: Message = {
+    const playerMessage = {
       id: Date.now().toString(),
       text: selectedChoice.text,
-      speaker: 'player',
+      speaker: 'player' as const,
       timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     };
 
     // Get NPC response
     const conversationType = Object.keys(SAMPLE_CONVERSATIONS).find(key => 
-      SAMPLE_CONVERSATIONS[key as keyof typeof SAMPLE_CONVERSATIONS].character.name === gameState.currentCharacter.name
+      SAMPLE_CONVERSATIONS[key as keyof typeof SAMPLE_CONVERSATIONS].character.name === currentCharacter.name
     ) as keyof typeof SAMPLE_CONVERSATIONS;
     
     const npcResponse = getNextResponse(choiceId, conversationType);
@@ -74,32 +84,21 @@ export default function Home() {
     // Simulate loading delay
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    setGameState(prev => ({
-      ...prev,
-      socialCreditScore: newScore,
-      riskLevel: getRiskLevel(newScore),
-      messages: [...prev.messages, playerMessage, npcResponse],
-      currentChoices: [] // Clear choices after selection
-    }));
-
+    setMessages([...messages, playerMessage, npcResponse]);
+    setCurrentChoices([]); // Clear choices after selection
     setIsLoading(false);
+
+    // Check if game should end
+    const newScore = socialCreditScore + selectedChoice.scoreImpact;
+    if (newScore <= 0) {
+      endCurrentSession();
+    }
   };
 
-  const resetGame = () => {
-    setGameState({
-      socialCreditScore: 750,
-      riskLevel: 'LOW',
-      currentCharacter: {
-        name: "Sarah Chen",
-        role: "Senior Compliance Officer",
-        status: "neutral",
-        trustLevel: 65
-      },
-      messages: [],
-      currentChoices: [],
-      gamePhase: 'welcome'
-    });
-    setPreviousScore(undefined);
+  const handleResetGame = () => {
+    endCurrentSession();
+    resetGame();
+    startNewSession();
   };
 
   return (
@@ -129,18 +128,18 @@ export default function Home() {
           <div className="text-right">
             <div className="text-sm text-gray-300">Social Credit Score</div>
             <div className={`text-3xl font-bold ${
-              gameState.socialCreditScore >= 800 ? 'text-green-400' : 
-              gameState.socialCreditScore >= 600 ? 'text-yellow-400' : 
-              gameState.socialCreditScore >= 400 ? 'text-orange-400' : 'text-red-400'
+              socialCreditScore >= 800 ? 'text-green-400' : 
+              socialCreditScore >= 600 ? 'text-yellow-400' : 
+              socialCreditScore >= 400 ? 'text-orange-400' : 'text-red-400'
             }`}>
-              {gameState.socialCreditScore}
+              {socialCreditScore}
             </div>
             <div className={`text-xs ${
-              gameState.riskLevel === 'LOW' ? 'text-green-400' : 
-              gameState.riskLevel === 'MEDIUM' ? 'text-yellow-400' : 
-              gameState.riskLevel === 'HIGH' ? 'text-orange-400' : 'text-red-400'
+              riskLevel === 'LOW' ? 'text-green-400' : 
+              riskLevel === 'MEDIUM' ? 'text-yellow-400' : 
+              riskLevel === 'HIGH' ? 'text-orange-400' : 'text-red-400'
             }`}>
-              Risk Level: {gameState.riskLevel}
+              Risk Level: {riskLevel}
             </div>
           </div>
         </div>
@@ -148,7 +147,7 @@ export default function Home() {
 
       {/* Main Game Area */}
       <main className="max-w-6xl mx-auto px-4">
-        {gameState.gamePhase === 'welcome' ? (
+        {gamePhase === 'welcome' ? (
           /* Welcome Screen */
           <Card className="bg-black/60 backdrop-blur-sm border-red-600/50 holographic">
             <CardHeader className="text-center">
@@ -245,30 +244,29 @@ export default function Home() {
               </div>
             </CardContent>
           </Card>
+        ) : gamePhase === 'ended' ? (
+          /* Game Ending Screen */
+          <GameEnding />
         ) : (
           /* Game Interface */
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Character Info */}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Left Sidebar - Character and Stats */}
             <div className="space-y-6">
               <CharacterDisplay
-                name={gameState.currentCharacter.name}
-                role={gameState.currentCharacter.role}
-                status={gameState.currentCharacter.status}
-                trustLevel={gameState.currentCharacter.trustLevel}
+                name={currentCharacter.name}
+                role={currentCharacter.role}
+                status={currentCharacter.status}
+                trustLevel={currentCharacter.trustLevel}
               />
               
-              <CreditScoreTracker
-                score={gameState.socialCreditScore}
-                previousScore={previousScore}
-                riskLevel={gameState.riskLevel}
-              />
+              <CreditScoreTracker />
             </div>
 
-            {/* Conversation Area */}
+            {/* Center - Conversation Area */}
             <div className="lg:col-span-2">
               <ConversationArea
-                messages={gameState.messages}
-                choices={gameState.currentChoices}
+                messages={messages}
+                choices={currentChoices}
                 onChoiceSelect={handleChoiceSelect}
                 isLoading={isLoading}
               />
@@ -277,12 +275,18 @@ export default function Home() {
               <div className="mt-4 text-center">
                 <Button 
                   variant="outline" 
-                  onClick={resetGame}
+                  onClick={handleResetGame}
                   className="text-gray-300 border-gray-600 hover:bg-gray-800"
                 >
                   Reset Game
                 </Button>
               </div>
+            </div>
+
+            {/* Right Sidebar - Event Log and Stats */}
+            <div className="space-y-6">
+              <RiskEventLog />
+              <SessionStats />
             </div>
           </div>
         )}
