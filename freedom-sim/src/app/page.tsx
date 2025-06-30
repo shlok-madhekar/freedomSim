@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import Image from "next/image";
 import { Eye, Shield, MapPin, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,23 @@ import { RiskEventLog } from "@/components/game/RiskEventLog";
 import { SessionStats } from "@/components/game/SessionStats";
 import { GameEnding } from "@/components/game/GameEnding";
 import { useGameStore } from "@/lib/gameStore";
-import { 
-  SAMPLE_CONVERSATIONS, 
-  getNextResponse 
+import {
+  SAMPLE_CONVERSATIONS,
+  getNextResponse,
+  Message,
+  Choice,
+  Character
 } from "@/lib/gameState";
+
+async function fetchGptChoices(messages: Message[], character: Character, numChoices = 3): Promise<Choice[]> {
+  const res = await fetch('/api/gpt-replies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, character, numChoices })
+  });
+  const data = await res.json();
+  return data.choices || [];
+}
 
 export default function Home() {
   const {
@@ -44,50 +57,56 @@ export default function Home() {
     }
   }, [gamePhase, startNewSession]);
 
-  const startConversation = (conversationType: keyof typeof SAMPLE_CONVERSATIONS) => {
+  const startConversation = useCallback(async (conversationType: keyof typeof SAMPLE_CONVERSATIONS) => {
     const conversation = SAMPLE_CONVERSATIONS[conversationType];
     setGamePhase('conversation');
     setCurrentCharacter(conversation.character);
     setMessages(conversation.messages);
-    setCurrentChoices(conversation.choices);
-  };
+    setIsLoading(true);
+    const gptChoices = await fetchGptChoices(conversation.messages, conversation.character);
+    setCurrentChoices(gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` })));
+    setIsLoading(false);
+  }, [setGamePhase, setCurrentCharacter, setMessages, setIsLoading, setCurrentChoices]);
 
   const handleChoiceSelect = async (choiceId: string) => {
     setIsLoading(true);
-    
-    // Find the selected choice
     const selectedChoice = currentChoices.find(choice => choice.id === choiceId);
     if (!selectedChoice) return;
-
-    // Update score using the new store
     updateScore(
-      selectedChoice.scoreImpact, 
-      `Response to ${currentCharacter.name}`, 
+      selectedChoice.scoreImpact,
+      `Response to ${currentCharacter.name}`,
       choiceId
     );
-    
     // Add player's choice to messages
-    const playerMessage = {
+    const playerMessage: Message = {
       id: Date.now().toString(),
       text: selectedChoice.text,
-      speaker: 'player' as const,
+      speaker: 'player',
       timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     };
-
-    // Get NPC response
-    const conversationType = Object.keys(SAMPLE_CONVERSATIONS).find(key => 
-      SAMPLE_CONVERSATIONS[key as keyof typeof SAMPLE_CONVERSATIONS].character.name === currentCharacter.name
-    ) as keyof typeof SAMPLE_CONVERSATIONS;
-    
-    const npcResponse = getNextResponse(choiceId, conversationType);
-
-    // Simulate loading delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    setMessages([...messages, playerMessage, npcResponse]);
-    setCurrentChoices([]); // Clear choices after selection
+    const updatedMessages = [...messages, playerMessage];
+    setMessages(updatedMessages);
+    // 1. Get NPC response
+    const npcRes = await fetch('/api/gpt-replies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: updatedMessages, character: currentCharacter, mode: 'npc' })
+    });
+    const npcData = await npcRes.json();
+    const npcMessage: Message = {
+      id: Date.now().toString() + '-npc',
+      text: npcData.npc || '...',
+      speaker: 'npc',
+      speakerName: currentCharacter.name,
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    };
+    const convoWithNpc = [...updatedMessages, npcMessage];
+    setMessages(convoWithNpc);
+    // 2. Get new player choices
+    const gptChoices = await fetchGptChoices(convoWithNpc, currentCharacter);
+    const nextChoices = gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` }));
+    setCurrentChoices(nextChoices);
     setIsLoading(false);
-
     // Check if game should end
     const newScore = socialCreditScore + selectedChoice.scoreImpact;
     if (newScore <= 0) {
@@ -267,7 +286,7 @@ export default function Home() {
               <ConversationArea
                 messages={messages}
                 choices={currentChoices}
-                onChoiceSelect={handleChoiceSelect}
+                onChoiceSelect={async (choiceId) => await handleChoiceSelect(choiceId)}
                 isLoading={isLoading}
               />
               
