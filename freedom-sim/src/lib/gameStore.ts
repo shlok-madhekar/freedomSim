@@ -8,6 +8,10 @@ export interface ScoreHistory {
   change: number;
   reason: string;
   choiceId: string;
+  reasoning?: string;
+  bannedPhrases?: string[];
+  riskFactors?: string[];
+  evaluationType?: 'safe' | 'risky' | 'dangerous';
 }
 
 export interface RiskEvent {
@@ -63,7 +67,12 @@ export interface GameState {
   riskMeterFlash: boolean;
   
   // Actions
-  updateScore: (change: number, reason: string, choiceId: string) => void;
+  updateScore: (change: number, reason: string, choiceId: string, evaluationData?: {
+    reasoning?: string;
+    bannedPhrases?: string[];
+    riskFactors?: string[];
+    evaluationType?: 'safe' | 'risky' | 'dangerous';
+  }) => void;
   addRiskEvent: (event: Omit<RiskEvent, 'id' | 'timestamp'>) => void;
   startNewSession: () => void;
   endCurrentSession: () => void;
@@ -160,7 +169,12 @@ export const useGameStore = create<GameState>()(
       riskMeterFlash: false,
 
       // Actions
-      updateScore: (change: number, reason: string, choiceId: string) => {
+      updateScore: (change: number, reason: string, choiceId: string, evaluationData?: {
+        reasoning?: string;
+        bannedPhrases?: string[];
+        riskFactors?: string[];
+        evaluationType?: 'safe' | 'risky' | 'dangerous';
+      }) => {
         const state = get();
         const now = Date.now();
         
@@ -205,7 +219,11 @@ export const useGameStore = create<GameState>()(
           score: newScore,
           change: finalChange,
           reason,
-          choiceId
+          choiceId,
+          reasoning: evaluationData?.reasoning,
+          bannedPhrases: evaluationData?.bannedPhrases,
+          riskFactors: evaluationData?.riskFactors,
+          evaluationType: evaluationData?.evaluationType
         };
         
         // Calculate new risk level and meter

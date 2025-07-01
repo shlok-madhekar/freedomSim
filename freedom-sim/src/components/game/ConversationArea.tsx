@@ -21,13 +21,15 @@ interface ConversationAreaProps {
   choices: Choice[];
   onChoiceSelect: (choiceId: string) => void;
   isLoading?: boolean;
+  showChoices?: boolean;
 }
 
 export function ConversationArea({ 
   messages, 
   choices, 
   onChoiceSelect, 
-  isLoading = false 
+  isLoading = false,
+  showChoices = true
 }: ConversationAreaProps) {
   return (
     <Card className="bg-black/60 backdrop-blur-sm border-red-600/50 holographic">
@@ -66,8 +68,8 @@ export function ConversationArea({
             )}
           </div>
 
-          {/* Choices Area */}
-          {choices.length > 0 && (
+          {/* Choices Area - Only show if showChoices is true */}
+          {showChoices && choices.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-lg font-semibold text-white futuristic-text">
                 Choose Your Response

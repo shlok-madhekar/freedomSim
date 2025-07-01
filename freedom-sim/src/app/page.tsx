@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import Image from "next/image";
 import { Eye, Shield, MapPin, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ import { ConversationArea } from "@/components/game/ConversationArea";
 import { RiskEventLog } from "@/components/game/RiskEventLog";
 import { SessionStats } from "@/components/game/SessionStats";
 import { GameEnding } from "@/components/game/GameEnding";
+import { AIEvaluationFeedback } from "@/components/game/AIEvaluationFeedback";
+import { CustomMessageInput } from "@/components/game/CustomMessageInput";
 import { useGameStore } from "@/lib/gameStore";
 import {
   SAMPLE_CONVERSATIONS,
@@ -28,6 +30,16 @@ async function fetchGptChoices(messages: Message[], character: Character, numCho
   });
   const data = await res.json();
   return data.choices || [];
+}
+
+async function fetchGptScore(messages: Message[], character: Character, playerReply: string) {
+  const res = await fetch('/api/gpt-replies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, character, playerReply, mode: 'score' })
+  });
+  const data = await res.json();
+  return data.score || { scoreImpact: 0, type: 'safe', reasoning: 'No evaluation', bannedPhrases: [], riskFactors: [] };
 }
 
 export default function Home() {
@@ -49,6 +61,24 @@ export default function Home() {
     endCurrentSession,
     resetGame
   } = useGameStore();
+
+  const [evaluationFeedback, setEvaluationFeedback] = useState<{
+    reasoning: string;
+    bannedPhrases: string[];
+    riskFactors: string[];
+    evaluationType: 'safe' | 'risky' | 'dangerous';
+    scoreImpact: number;
+    isVisible: boolean;
+  }>({
+    reasoning: '',
+    bannedPhrases: [],
+    riskFactors: [],
+    evaluationType: 'safe',
+    scoreImpact: 0,
+    isVisible: false
+  });
+
+  const [isCustomMode, setIsCustomMode] = useState(false);
 
   // Initialize game session on mount
   useEffect(() => {
@@ -72,11 +102,48 @@ export default function Home() {
     setIsLoading(true);
     const selectedChoice = currentChoices.find(choice => choice.id === choiceId);
     if (!selectedChoice) return;
+    
+    // Get dynamic scoring from GPT-4
+    const scoreEvaluation = await fetchGptScore(messages, currentCharacter, selectedChoice.text);
+    
+    // Show evaluation feedback
+    setEvaluationFeedback({
+      reasoning: scoreEvaluation.reasoning,
+      bannedPhrases: scoreEvaluation.bannedPhrases,
+      riskFactors: scoreEvaluation.riskFactors,
+      evaluationType: scoreEvaluation.type,
+      scoreImpact: scoreEvaluation.scoreImpact,
+      isVisible: true
+    });
+    
+    // Hide feedback after 5 seconds
+    setTimeout(() => {
+      setEvaluationFeedback(prev => ({ ...prev, isVisible: false }));
+    }, 5000);
+    
+    // Update score with AI evaluation
     updateScore(
-      selectedChoice.scoreImpact,
-      `Response to ${currentCharacter.name}`,
-      choiceId
+      scoreEvaluation.scoreImpact,
+      `AI Evaluation: ${scoreEvaluation.reasoning}`,
+      choiceId,
+      {
+        reasoning: scoreEvaluation.reasoning,
+        bannedPhrases: scoreEvaluation.bannedPhrases,
+        riskFactors: scoreEvaluation.riskFactors,
+        evaluationType: scoreEvaluation.type
+      }
     );
+    
+    // Log detailed score change information
+    console.log('Score Evaluation:', {
+      reply: selectedChoice.text,
+      scoreImpact: scoreEvaluation.scoreImpact,
+      type: scoreEvaluation.type,
+      reasoning: scoreEvaluation.reasoning,
+      bannedPhrases: scoreEvaluation.bannedPhrases,
+      riskFactors: scoreEvaluation.riskFactors
+    });
+    
     // Add player's choice to messages
     const playerMessage: Message = {
       id: Date.now().toString(),
@@ -86,6 +153,7 @@ export default function Home() {
     };
     const updatedMessages = [...messages, playerMessage];
     setMessages(updatedMessages);
+    
     // 1. Get NPC response
     const npcRes = await fetch('/api/gpt-replies', {
       method: 'POST',
@@ -102,13 +170,99 @@ export default function Home() {
     };
     const convoWithNpc = [...updatedMessages, npcMessage];
     setMessages(convoWithNpc);
+    
     // 2. Get new player choices
     const gptChoices = await fetchGptChoices(convoWithNpc, currentCharacter);
     const nextChoices = gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` }));
     setCurrentChoices(nextChoices);
     setIsLoading(false);
+    
     // Check if game should end
-    const newScore = socialCreditScore + selectedChoice.scoreImpact;
+    const newScore = socialCreditScore + scoreEvaluation.scoreImpact;
+    if (newScore <= 0) {
+      endCurrentSession();
+    }
+  };
+
+  const handleCustomMessage = async (message: string) => {
+    setIsLoading(true);
+    
+    // Get dynamic scoring from GPT-4 for custom message
+    const scoreEvaluation = await fetchGptScore(messages, currentCharacter, message);
+    
+    // Show evaluation feedback
+    setEvaluationFeedback({
+      reasoning: scoreEvaluation.reasoning,
+      bannedPhrases: scoreEvaluation.bannedPhrases,
+      riskFactors: scoreEvaluation.riskFactors,
+      evaluationType: scoreEvaluation.type,
+      scoreImpact: scoreEvaluation.scoreImpact,
+      isVisible: true
+    });
+    
+    // Hide feedback after 5 seconds
+    setTimeout(() => {
+      setEvaluationFeedback(prev => ({ ...prev, isVisible: false }));
+    }, 5000);
+    
+    // Update score with AI evaluation
+    updateScore(
+      scoreEvaluation.scoreImpact,
+      `AI Evaluation: ${scoreEvaluation.reasoning}`,
+      `custom-${Date.now()}`,
+      {
+        reasoning: scoreEvaluation.reasoning,
+        bannedPhrases: scoreEvaluation.bannedPhrases,
+        riskFactors: scoreEvaluation.riskFactors,
+        evaluationType: scoreEvaluation.type
+      }
+    );
+    
+    // Log detailed score change information
+    console.log('Custom Message Score Evaluation:', {
+      reply: message,
+      scoreImpact: scoreEvaluation.scoreImpact,
+      type: scoreEvaluation.type,
+      reasoning: scoreEvaluation.reasoning,
+      bannedPhrases: scoreEvaluation.bannedPhrases,
+      riskFactors: scoreEvaluation.riskFactors
+    });
+    
+    // Add player's custom message to messages
+    const playerMessage: Message = {
+      id: Date.now().toString(),
+      text: message,
+      speaker: 'player',
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    };
+    const updatedMessages = [...messages, playerMessage];
+    setMessages(updatedMessages);
+    
+    // 1. Get NPC response
+    const npcRes = await fetch('/api/gpt-replies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: updatedMessages, character: currentCharacter, mode: 'npc' })
+    });
+    const npcData = await npcRes.json();
+    const npcMessage: Message = {
+      id: Date.now().toString() + '-npc',
+      text: npcData.npc || '...',
+      speaker: 'npc',
+      speakerName: currentCharacter.name,
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    };
+    const convoWithNpc = [...updatedMessages, npcMessage];
+    setMessages(convoWithNpc);
+    
+    // 2. Get new player choices
+    const gptChoices = await fetchGptChoices(convoWithNpc, currentCharacter);
+    const nextChoices = gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` }));
+    setCurrentChoices(nextChoices);
+    setIsLoading(false);
+    
+    // Check if game should end
+    const newScore = socialCreditScore + scoreEvaluation.scoreImpact;
     if (newScore <= 0) {
       endCurrentSession();
     }
@@ -118,6 +272,10 @@ export default function Home() {
     endCurrentSession();
     resetGame();
     startNewSession();
+  };
+
+  const toggleCustomMode = () => {
+    setIsCustomMode(!isCustomMode);
   };
 
   return (
@@ -288,7 +446,30 @@ export default function Home() {
                 choices={currentChoices}
                 onChoiceSelect={async (choiceId) => await handleChoiceSelect(choiceId)}
                 isLoading={isLoading}
+                showChoices={!isCustomMode}
               />
+              
+              {/* Custom Message Input or Generated Choices */}
+              <div className="mt-4">
+                <CustomMessageInput
+                  onSendMessage={handleCustomMessage}
+                  isLoading={isLoading}
+                  onToggleMode={toggleCustomMode}
+                  isCustomMode={isCustomMode}
+                />
+              </div>
+              
+              {/* AI Evaluation Feedback */}
+              <div className="mt-4">
+                <AIEvaluationFeedback
+                  reasoning={evaluationFeedback.reasoning}
+                  bannedPhrases={evaluationFeedback.bannedPhrases}
+                  riskFactors={evaluationFeedback.riskFactors}
+                  evaluationType={evaluationFeedback.evaluationType}
+                  scoreImpact={evaluationFeedback.scoreImpact}
+                  isVisible={evaluationFeedback.isVisible}
+                />
+              </div>
               
               {/* Reset Button */}
               <div className="mt-4 text-center">
