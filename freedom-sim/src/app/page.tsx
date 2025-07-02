@@ -15,12 +15,12 @@ import { AIEvaluationFeedback } from "@/components/game/AIEvaluationFeedback";
 import { CustomMessageInput } from "@/components/game/CustomMessageInput";
 import { useGameStore } from "@/lib/gameStore";
 import {
-  SAMPLE_CONVERSATIONS,
-  getNextResponse,
   Message,
   Choice,
-  Character
+  Character,
+  getCharacterById
 } from "@/lib/gameState";
+import { CHARACTERS, CharacterProfile } from '@/lib/characters';
 
 async function fetchGptChoices(messages: Message[], character: Character, numChoices = 3): Promise<Choice[]> {
   const res = await fetch('/api/gpt-replies', {
@@ -41,6 +41,9 @@ async function fetchGptScore(messages: Message[], character: Character, playerRe
   const data = await res.json();
   return data.score || { scoreImpact: 0, type: 'safe', reasoning: 'No evaluation', bannedPhrases: [], riskFactors: [] };
 }
+
+// Story progression state
+const STORY_SEQUENCE: string[] = ['boss', 'neighbor', 'cop', 'kid'];
 
 export default function Home() {
   const {
@@ -79,34 +82,57 @@ export default function Home() {
   });
 
   const [isCustomMode, setIsCustomMode] = useState(false);
+  const [storyIndex, setStoryIndex] = useState(0);
+  const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
+  const [playerName] = useState('Player'); // Optionally make this dynamic
+
+  // Move startStoryConversation here so it can access all state
+  const startStoryConversation = useCallback(async (characterId?: string) => {
+    const id = characterId || STORY_SEQUENCE[storyIndex];
+    const character = getCharacterById(id) as CharacterProfile;
+    if (!character) return;
+    setGamePhase('conversation');
+    setCurrentCharacter(character);
+    // Dynamic intro as a system/narrator message
+    const introMessage: Message = {
+      id: `intro-${id}`,
+      text: character.intro(playerName),
+      speaker: 'npc',
+      speakerName: character.name,
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    };
+    setMessages([introMessage]);
+    setConversationHistory((prev: Message[]) => [...prev, introMessage]);
+    setIsLoading(true);
+    const gptChoices = await fetchGptChoices([introMessage], character);
+    setCurrentChoices(gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` })));
+    setIsLoading(false);
+  }, [storyIndex, setGamePhase, setCurrentCharacter, setMessages, setIsLoading, setCurrentChoices, setConversationHistory, playerName]);
 
   // Initialize game session on mount
   useEffect(() => {
     if (gamePhase === 'welcome') {
-      startNewSession();
+      setStoryIndex(0);
+      setConversationHistory([]);
+      startStoryConversation(STORY_SEQUENCE[0]);
     }
-  }, [gamePhase, startNewSession]);
+  }, [gamePhase, startStoryConversation]);
 
-  const startConversation = useCallback(async (conversationType: keyof typeof SAMPLE_CONVERSATIONS) => {
-    const conversation = SAMPLE_CONVERSATIONS[conversationType];
-    setGamePhase('conversation');
-    setCurrentCharacter(conversation.character);
-    setMessages(conversation.messages);
-    setIsLoading(true);
-    const gptChoices = await fetchGptChoices(conversation.messages, conversation.character);
-    setCurrentChoices(gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` })));
-    setIsLoading(false);
-  }, [setGamePhase, setCurrentCharacter, setMessages, setIsLoading, setCurrentChoices]);
+  // Progress to next story character
+  const progressStory = () => {
+    if (storyIndex < STORY_SEQUENCE.length - 1) {
+      setStoryIndex(storyIndex + 1);
+      startStoryConversation(STORY_SEQUENCE[storyIndex + 1]);
+    } else {
+      endCurrentSession();
+    }
+  };
 
   const handleChoiceSelect = async (choiceId: string) => {
     setIsLoading(true);
     const selectedChoice = currentChoices.find(choice => choice.id === choiceId);
     if (!selectedChoice) return;
-    
-    // Get dynamic scoring from GPT-4
     const scoreEvaluation = await fetchGptScore(messages, currentCharacter, selectedChoice.text);
-    
-    // Show evaluation feedback
     setEvaluationFeedback({
       reasoning: scoreEvaluation.reasoning,
       bannedPhrases: scoreEvaluation.bannedPhrases,
@@ -115,13 +141,9 @@ export default function Home() {
       scoreImpact: scoreEvaluation.scoreImpact,
       isVisible: true
     });
-    
-    // Hide feedback after 5 seconds
     setTimeout(() => {
       setEvaluationFeedback(prev => ({ ...prev, isVisible: false }));
     }, 5000);
-    
-    // Update score with AI evaluation
     updateScore(
       scoreEvaluation.scoreImpact,
       `AI Evaluation: ${scoreEvaluation.reasoning}`,
@@ -133,18 +155,6 @@ export default function Home() {
         evaluationType: scoreEvaluation.type
       }
     );
-    
-    // Log detailed score change information
-    console.log('Score Evaluation:', {
-      reply: selectedChoice.text,
-      scoreImpact: scoreEvaluation.scoreImpact,
-      type: scoreEvaluation.type,
-      reasoning: scoreEvaluation.reasoning,
-      bannedPhrases: scoreEvaluation.bannedPhrases,
-      riskFactors: scoreEvaluation.riskFactors
-    });
-    
-    // Add player's choice to messages
     const playerMessage: Message = {
       id: Date.now().toString(),
       text: selectedChoice.text,
@@ -153,7 +163,7 @@ export default function Home() {
     };
     const updatedMessages = [...messages, playerMessage];
     setMessages(updatedMessages);
-    
+    setConversationHistory((prev) => [...prev, playerMessage]);
     // 1. Get NPC response
     const npcRes = await fetch('/api/gpt-replies', {
       method: 'POST',
@@ -170,13 +180,16 @@ export default function Home() {
     };
     const convoWithNpc = [...updatedMessages, npcMessage];
     setMessages(convoWithNpc);
-    
+    setConversationHistory((prev) => [...prev, npcMessage]);
     // 2. Get new player choices
     const gptChoices = await fetchGptChoices(convoWithNpc, currentCharacter);
     const nextChoices = gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` }));
     setCurrentChoices(nextChoices);
     setIsLoading(false);
-    
+    // If conversation is over (e.g., no more choices), progress story
+    if (nextChoices.length === 0) {
+      progressStory();
+    }
     // Check if game should end
     const newScore = socialCreditScore + scoreEvaluation.scoreImpact;
     if (newScore <= 0) {
@@ -186,11 +199,7 @@ export default function Home() {
 
   const handleCustomMessage = async (message: string) => {
     setIsLoading(true);
-    
-    // Get dynamic scoring from GPT-4 for custom message
     const scoreEvaluation = await fetchGptScore(messages, currentCharacter, message);
-    
-    // Show evaluation feedback
     setEvaluationFeedback({
       reasoning: scoreEvaluation.reasoning,
       bannedPhrases: scoreEvaluation.bannedPhrases,
@@ -199,13 +208,9 @@ export default function Home() {
       scoreImpact: scoreEvaluation.scoreImpact,
       isVisible: true
     });
-    
-    // Hide feedback after 5 seconds
     setTimeout(() => {
       setEvaluationFeedback(prev => ({ ...prev, isVisible: false }));
     }, 5000);
-    
-    // Update score with AI evaluation
     updateScore(
       scoreEvaluation.scoreImpact,
       `AI Evaluation: ${scoreEvaluation.reasoning}`,
@@ -217,18 +222,6 @@ export default function Home() {
         evaluationType: scoreEvaluation.type
       }
     );
-    
-    // Log detailed score change information
-    console.log('Custom Message Score Evaluation:', {
-      reply: message,
-      scoreImpact: scoreEvaluation.scoreImpact,
-      type: scoreEvaluation.type,
-      reasoning: scoreEvaluation.reasoning,
-      bannedPhrases: scoreEvaluation.bannedPhrases,
-      riskFactors: scoreEvaluation.riskFactors
-    });
-    
-    // Add player's custom message to messages
     const playerMessage: Message = {
       id: Date.now().toString(),
       text: message,
@@ -237,7 +230,7 @@ export default function Home() {
     };
     const updatedMessages = [...messages, playerMessage];
     setMessages(updatedMessages);
-    
+    setConversationHistory((prev) => [...prev, playerMessage]);
     // 1. Get NPC response
     const npcRes = await fetch('/api/gpt-replies', {
       method: 'POST',
@@ -254,14 +247,15 @@ export default function Home() {
     };
     const convoWithNpc = [...updatedMessages, npcMessage];
     setMessages(convoWithNpc);
-    
+    setConversationHistory((prev) => [...prev, npcMessage]);
     // 2. Get new player choices
     const gptChoices = await fetchGptChoices(convoWithNpc, currentCharacter);
     const nextChoices = gptChoices.map((c: Choice, idx: number) => ({ ...c, id: `gpt-${Date.now()}-${idx}` }));
     setCurrentChoices(nextChoices);
     setIsLoading(false);
-    
-    // Check if game should end
+    if (nextChoices.length === 0) {
+      progressStory();
+    }
     const newScore = socialCreditScore + scoreEvaluation.scoreImpact;
     if (newScore <= 0) {
       endCurrentSession();
@@ -389,9 +383,9 @@ export default function Home() {
                     variant="propaganda" 
                     size="xl" 
                     className="futuristic-text"
-                    onClick={() => startConversation('coworker')}
+                    onClick={() => startStoryConversation('boss')}
                   >
-                    <span>COWORKER</span>
+                    <span>BOSS</span>
                     <br />
                     <span className="text-sm font-normal">Office Politics</span>
                   </Button>
@@ -400,7 +394,7 @@ export default function Home() {
                     variant="propaganda" 
                     size="xl" 
                     className="futuristic-text"
-                    onClick={() => startConversation('neighbor')}
+                    onClick={() => startStoryConversation('neighbor')}
                   >
                     <span>NEIGHBOR</span>
                     <br />
@@ -411,11 +405,11 @@ export default function Home() {
                     variant="propaganda" 
                     size="xl" 
                     className="futuristic-text"
-                    onClick={() => startConversation('friend')}
+                    onClick={() => startStoryConversation('cop')}
                   >
-                    <span>FRIEND</span>
+                    <span>COP</span>
                     <br />
-                    <span className="text-sm font-normal">Trust Test</span>
+                    <span className="text-sm font-normal">Community Watch</span>
                   </Button>
                 </div>
               </div>
@@ -442,7 +436,7 @@ export default function Home() {
             {/* Center - Conversation Area */}
             <div className="lg:col-span-2">
               <ConversationArea
-                messages={messages}
+                messages={conversationHistory}
                 choices={currentChoices}
                 onChoiceSelect={async (choiceId) => await handleChoiceSelect(choiceId)}
                 isLoading={isLoading}
